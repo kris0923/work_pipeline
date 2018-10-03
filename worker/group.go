@@ -1,15 +1,21 @@
 package worker
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 type Group interface {
 	Init() error
 	Start() error
 	Stop() error
+	Done() error
 
 	GetInQueue() Queue
 	GetWorkerName() string
 	GetWorkerNum() int
+	GetWaitGroup() *sync.WaitGroup
+	GetDispatchWaitGroup() *sync.WaitGroup
 	GetWorker(int) Worker
 	GetGroupType() GROUP_TYPE
 	GetFollowQueues() []Queue
@@ -48,15 +54,17 @@ func NewBaseGroup(
 }
 
 type BaseGroup struct {
-	WorkerPipeline Pipeline
-	GroupType      GROUP_TYPE
-	WorkerName     string
-	WorkerNum      int
-	InQueue        Queue
-	FollowQueues   []Queue
-	Workers        []Worker
-	NewWorker      WorkerFunc
-	WorkerConfig   interface{}
+	WorkerPipeline    Pipeline
+	GroupType         GROUP_TYPE
+	WorkerName        string
+	WorkerNum         int
+	InQueue           Queue
+	FollowQueues      []Queue
+	Workers           []Worker
+	NewWorker         WorkerFunc
+	WaitGroup         sync.WaitGroup
+	DispatchWaitGroup sync.WaitGroup
+	WorkerConfig      interface{}
 }
 
 func (bg *BaseGroup) Init() error {
@@ -86,11 +94,35 @@ func (bg *BaseGroup) Start() error {
 	return nil
 }
 func (bg *BaseGroup) Stop() error {
+
+	bg.GetInQueue().Close()
+	if DISPATCH_GROUP == bg.GetGroupType() {
+		for _, worker := range bg.Workers {
+			worker.GetInQueue().Close()
+		}
+	}
+
 	for _, worker := range bg.Workers {
 		if err := worker.Stop(); nil != err {
 			return err
 		}
 	}
+	bg.WaitGroup.Wait()
+	return nil
+}
+
+func (bg *BaseGroup) Done() error {
+	bg.GetInQueue().Close()
+	fmt.Println("WG : " + bg.WorkerName + " Wait Done")
+	bg.DispatchWaitGroup.Wait()
+
+	if DISPATCH_GROUP == bg.GetGroupType() {
+		for _, worker := range bg.Workers {
+			worker.GetInQueue().Close()
+		}
+	}
+	bg.WaitGroup.Wait()
+	fmt.Println("WG : " + bg.WorkerName + " Done Done")
 	return nil
 }
 
@@ -112,18 +144,28 @@ func (bg *BaseGroup) SetInQueue(inQueue Queue) {
 func (bg *BaseGroup) GetFollowQueues() []Queue {
 	return bg.FollowQueues
 }
+
 func (bg *BaseGroup) AddFollowQueue(outQueue Queue) []Queue {
 	bg.FollowQueues = append(bg.FollowQueues, outQueue)
 	return bg.FollowQueues
+}
 
+func (bg *BaseGroup) GetWaitGroup() *sync.WaitGroup {
+	return &bg.WaitGroup
+}
+
+func (bg *BaseGroup) GetDispatchWaitGroup() *sync.WaitGroup {
+	return &bg.DispatchWaitGroup
 }
 
 func (bg *BaseGroup) GetWorkerName() string {
 	return bg.WorkerName
 }
+
 func (bg *BaseGroup) GetWorkerNum() int {
 	return bg.WorkerNum
 }
+
 func (bg *BaseGroup) GetGroupType() GROUP_TYPE {
 	return bg.GroupType
 }

@@ -15,3 +15,6 @@ func (q Queue) Put(msg interface{}) {
 func (q Queue) Get() interface{} {
 	return <-q
 }
+func (q Queue) Close() {
+	close(q)
+}

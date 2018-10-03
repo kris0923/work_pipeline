@@ -43,6 +43,7 @@ func (bw *BaseWorker) Init() error {
 }
 
 func (bw *BaseWorker) Start() error {
+	bw.WorkerGroup.GetWaitGroup().Add(1)
 	fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(bw.WorkerIdx) + "] Start")
 	go func() {
 		for {
@@ -57,6 +58,7 @@ func (bw *BaseWorker) Start() error {
 			} else {
 				//TODO Error Process
 			}
+			bw.WorkerGroup.GetWaitGroup().Done()
 		}
 	}()
 	return nil
@@ -72,6 +74,7 @@ func (bw *BaseWorker) process(msgIn interface{}) (interface{}, error) {
 }
 
 func (bw *BaseWorker) Dispatch() error {
+	bw.WorkerGroup.GetWaitGroup().Add(1)
 	go func() {
 		workerNum := bw.WorkerGroup.GetWorkerNum()
 		idx := 0
@@ -84,6 +87,7 @@ func (bw *BaseWorker) Dispatch() error {
 			bw.WorkerGroup.GetWorker(idx).GetInQueue().Put(msgIn)
 			idx = (idx + 1) & (workerNum - 1)
 		}
+		bw.WorkerGroup.GetWaitGroup().Done()
 	}()
 	return nil
 }

@@ -6,6 +6,7 @@ type Pipeline interface {
 	Init() error
 	Start() error
 	Stop() error
+	Done() error
 	Insert(Group, ...string)
 }
 
@@ -41,6 +42,12 @@ func (bp *BasePipeline) Start() error {
 func (bp *BasePipeline) Stop() error {
 	for _, wg := range bp.pipelines {
 		wg.Stop()
+	}
+	return nil
+}
+func (bp *BasePipeline) Done() error {
+	for _, wg := range bp.pipelines {
+		wg.Done()
 	}
 	return nil
 }

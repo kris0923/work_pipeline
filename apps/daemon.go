@@ -4,16 +4,22 @@ import (
 	"chaossir/work_pipeline/guid"
 	"chaossir/work_pipeline/worker"
 	"fmt"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"strconv"
 )
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6062", nil))
+	}()
 	pl := worker.NewBasePipeline()
 
 	wg1 := worker.NewBaseGroup(
 		pl,
 		"start",
-		4,
+		1<<4,
 		NewWorkerFunc,
 		worker.NORMAL_GROUP,
 		nil,
@@ -23,7 +29,7 @@ func main() {
 	b1 := worker.NewBaseGroup(
 		pl,
 		"dispatch",
-		4,
+		1<<4,
 		NewWorkerFunc,
 		worker.DISPATCH_GROUP,
 		nil,
@@ -33,7 +39,7 @@ func main() {
 	ew := worker.NewBaseGroup(
 		pl,
 		"end",
-		4,
+		1<<4,
 		NewWorkerFunc,
 		worker.NORMAL_GROUP,
 		nil,
@@ -43,11 +49,17 @@ func main() {
 	pl.Start()
 	quit := make(chan bool)
 
-	for {
-		select {
-		case <-quit:
-			break
-		}
+	go func() {
+		fmt.Println("Done Begin")
+		pl.Done()
+		quit <- true
+		close(quit)
+		fmt.Println("Done End")
+	}()
+
+	select {
+	case <-quit:
+		fmt.Println("Quit")
 	}
 }
 
@@ -57,6 +69,7 @@ func NewWorkerFunc(wg worker.Group, wIdx int) worker.Worker {
 		//fmt.Println("NewWorkerFunc start InitFunc")
 		return &A1Worker{
 			BaseWorker: *worker.NewBaseWorker(wg, wIdx),
+			Quit:       make(chan bool),
 		}
 	case "dispatch":
 		return &B1Worker{
@@ -79,27 +92,41 @@ type Msg struct {
 
 type A1Worker struct {
 	worker.BaseWorker
+	Quit chan bool
 }
 
 func (aw *A1Worker) Init() error {
-	fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(aw.WorkerIdx) + "] Init")
+	fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(aw.WorkerIdx) + "] Init")
 	return nil
 
 }
 
 func (aw *A1Worker) Start() error {
-	fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(aw.WorkerIdx) + "] Start")
+	fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(aw.WorkerIdx) + "] Start")
+	aw.WorkerGroup.GetWaitGroup().Add(1)
 	guidFactory := guid.NewGUIDFactory(int64(aw.WorkerIdx))
 	go func() {
-		for idx := 0; idx < 1000000; idx++ {
+		for idx := 0; idx < 100; idx++ {
 			curGuid, _ := guidFactory.NewGUID()
-			fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(aw.WorkerIdx) + "] Generate Msg {ID:" + strconv.FormatInt(int64(curGuid), 10) + ",Idx:" + strconv.Itoa(idx) + "}")
+			fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(aw.WorkerIdx) + "] Generate Msg {ID:" + strconv.FormatInt(int64(curGuid), 10) + ",Idx:" + strconv.Itoa(idx) + "}")
 			aw.WorkerGroup.PutNextPipe(&Msg{ID: curGuid, Idx: idx})
+			select {
+			case <-aw.Quit:
+				break
+			default:
+			}
+
 		}
-		fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(aw.WorkerIdx) + "] End")
+		fmt.Println("AW " + aw.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(aw.WorkerIdx) + "] End")
+		aw.WorkerGroup.GetWaitGroup().Done()
 
 	}()
 
+	return nil
+}
+
+func (aw *A1Worker) Stop() error {
+	aw.Quit <- true
 	return nil
 }
 
@@ -114,7 +141,8 @@ func (bw *B1Worker) process(msgIn interface{}) (interface{}, error) {
 }
 
 func (bw *B1Worker) Start() error {
-	fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(bw.WorkerIdx) + "] Start")
+	fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + " start_worker[" + strconv.Itoa(bw.WorkerIdx) + "] Start")
+	bw.WorkerGroup.GetWaitGroup().Add(1)
 	go func() {
 		for {
 			msgIn := bw.InQueue.Get()
@@ -126,13 +154,15 @@ func (bw *B1Worker) Start() error {
 				bw.WorkerGroup.PutNextPipe(msgOut)
 			}
 		}
-		fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(bw.WorkerIdx) + "] End")
+		fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + " start_worker[" + strconv.Itoa(bw.WorkerIdx) + "] End")
+		bw.WorkerGroup.GetWaitGroup().Done()
 	}()
 	return nil
 }
 
 func (bw *B1Worker) Dispatch() error {
-	fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(bw.WorkerIdx) + "] StartDispatch")
+	fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + " dispatch_worker[" + strconv.Itoa(bw.WorkerIdx) + "] StartDispatch")
+	bw.WorkerGroup.GetDispatchWaitGroup().Add(1)
 	go func() {
 		workerNum := bw.WorkerGroup.GetWorkerNum()
 		idx := 0
@@ -148,6 +178,9 @@ func (bw *B1Worker) Dispatch() error {
 			bw.WorkerGroup.GetWorker(idx).GetInQueue().Put(msgIn)
 			//idx = (idx + 1) & (workerNum - 1)
 		}
+		fmt.Println("BW " + bw.WorkerGroup.GetWorkerName() + " dispatch_worker[" + strconv.Itoa(bw.WorkerIdx) + "] EndDispatch")
+		bw.WorkerGroup.GetDispatchWaitGroup().Done()
+
 	}()
 	return nil
 }
@@ -157,15 +190,13 @@ type EndWorker struct {
 }
 
 func (ew *EndWorker) Init() error {
-	fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(ew.WorkerIdx) + "] Init")
+	fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(ew.WorkerIdx) + "] Init")
 	return nil
 }
 
 func (ew *EndWorker) Start() error {
-	fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(ew.WorkerIdx) + "] Start")
-	if worker.DISPATCH_GROUP == ew.WorkerGroup.GetGroupType() {
-		ew.Dispatch()
-	}
+	fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(ew.WorkerIdx) + "] Start")
+	ew.WorkerGroup.GetWaitGroup().Add(1)
 	go func() {
 		for {
 			msgIn := ew.InQueue.Get()
@@ -176,7 +207,8 @@ func (ew *EndWorker) Start() error {
 				//TODO Error Process
 			}
 		}
-		fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + "worker[ " + strconv.Itoa(ew.WorkerIdx) + "] End")
+		fmt.Println("EW " + ew.WorkerGroup.GetWorkerName() + " worker[" + strconv.Itoa(ew.WorkerIdx) + "] End")
+		ew.WorkerGroup.GetWaitGroup().Done()
 	}()
 	return nil
 }
