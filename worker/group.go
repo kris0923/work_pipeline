@@ -94,8 +94,8 @@ func (bg *BaseGroup) Start() error {
 	return nil
 }
 func (bg *BaseGroup) Stop() error {
-
 	bg.GetInQueue().Close()
+	bg.DispatchWaitGroup.Wait()
 	if DISPATCH_GROUP == bg.GetGroupType() {
 		for _, worker := range bg.Workers {
 			worker.GetInQueue().Close()
