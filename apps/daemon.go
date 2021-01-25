@@ -1,13 +1,13 @@
 package main
 
 import (
-	"chaossir/work_pipeline/guid"
-	"chaossir/work_pipeline/worker"
 	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"strconv"
+	"work_pipeline/guid"
+	"work_pipeline/worker"
 )
 
 func main() {
